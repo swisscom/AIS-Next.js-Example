@@ -1,101 +1,194 @@
-import Image from "next/image";
+"use client"
+import { useState } from "react";
+import { Document, Page, } from "react-pdf";
+
+interface PageNumbersProps {
+  pageNumber: number;
+  setPageNumber: React.Dispatch<React.SetStateAction<number>>;
+  numPages: number;
+}
+
+const PageNumbers: React.FC<PageNumbersProps> = ({ pageNumber, setPageNumber, numPages }) => {
+  return (
+    <div style={{ marginTop: "16px" }}>
+      <div style={{ marginBottom: "16px" }}>
+        Page {pageNumber} of {numPages}
+      </div>
+      {pageNumber > 1 && <button onClick={() => setPageNumber((prevState) => prevState - 1)}>previous page</button>}
+      {pageNumber >= 1 && pageNumber < numPages && (
+        <button onClick={() => setPageNumber((prevState) => prevState + 1)}>next page</button>
+      )}
+    </div>
+  );
+};
+
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isFilePicked, setIsFilePicked] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+  interface FileChangeEvent extends React.ChangeEvent<HTMLInputElement> {
+    target: HTMLInputElement & {
+      files: FileList;
+    };
+  }
+
+  const changeHandler = (event: FileChangeEvent): void => {
+    setSelectedFile(event.target.files[0]);
+    setIsFilePicked(true);
+  };
+  const [numPages, setNumPages] = useState<number | null>(null);
+
+  const [pageNumber, setPageNumber] = useState(1);
+  const [loading, setLoading] = useState(false);
+
+  const [signedSuccessfully, setSignedSuccessfully] = useState(false);
+  const [errorExist, setErrorExist] = useState(false);
+
+  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
+    setNumPages(numPages);
+  }
+
+  const handleSubmission = () => {
+    if (!selectedFile) return;
+    
+    setLocalStorage();
+
+    const formData = new FormData();
+
+    formData.append("pdf-file", selectedFile);
+
+    fetch("http://localhost:8001/upload", {
+      method: "POST",
+      body: formData,
+    })
+      .then((response) => response.json())
+      .then((result) => {
+        console.log("Success:", result);
+
+        setLoading(true);
+        signPdf();
+      })
+      .catch((error) => {
+        console.error("Error:", error);
+      });
+  };
+
+  const setLocalStorage = () => {
+    const pdfTitle = selectedFile?.name.substring(0, selectedFile.name.length - 4);
+
+    localStorage.setItem("pdfTitle", JSON.stringify({ pdfTitle }));
+  };
+
+  const signPdf = () => {
+    const pdfTitle = localStorage.getItem("pdfTitle");
+
+    // temp sign
+    fetch("http://localhost:8001/signpdf", {
+      method: "POST",
+      body: pdfTitle,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    })
+      .then((response) => response.json())
+      .then((result) => {
+        console.log("Success:", result);
+        setLoading(false);
+
+        if (result?.error) {
+          setErrorExist(result.error);
+        } else {
+          setSignedSuccessfully(true);
+        }
+      });
+  };
+
+  if (loading)
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexDirection: "column" }}>
+        <p style={{ color: "#fff", fontSize: 24 }}>Signing is pending</p>
+        <div>...</div>
+      </div>
+    );
+
+  if (errorExist)
+    return (
+      <div className="interactionContainer">
+        <p>There was an error: {errorExist}</p>
+        <button
+          className="button"
+          onClick={() => {
+            setErrorExist(false);
+            localStorage.removeItem("pdfTitle");
+            setSelectedFile(null);
+            setIsFilePicked(false);
+          }}
         >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          Sign a new PDF
+        </button>
+      </div>
+    );
+
+  if (signedSuccessfully)
+    return (
+      <div className="interactionContainer">
+        <p>Signed successfully</p>
+        <button
+          className="button"
+          onClick={() => {
+            const pdfTitleObj = localStorage.getItem("pdfTitle");
+            if (!pdfTitleObj) return;
+            
+            const pdfTitle = JSON.parse(pdfTitleObj).pdfTitle;
+            const newWindow = window.open("http://localhost:8001/uploads/" + pdfTitle, "_blank");
+            newWindow?.focus();
+          }}
         >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          Download Signed PDF
+        </button>
+        <button
+          className="button"
+          onClick={() => {
+            setSignedSuccessfully(false);
+            localStorage.removeItem("pdfTitle");
+            setSelectedFile(null);
+            setIsFilePicked(false);
+          }}
         >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          Sign a new PDF
+        </button>
+      </div>
+    );
+
+  return (
+    <div className="masthead">
+      {isFilePicked && (
+        <Document file={selectedFile} onLoadSuccess={onDocumentLoadSuccess}>
+          <Page pageNumber={pageNumber} height={800} />
+        </Document>
+      )}
+      <div className="interactionContainer">
+        <input type="file" name="file" onChange={changeHandler} />
+
+        {isFilePicked ? (
+          <div>
+            <p>Filename: {selectedFile?.name}</p>
+            <p>Filetype: {selectedFile?.type}</p>
+            <p>Size in bytes: {selectedFile?.size}</p>
+            <p>lastModifiedDate: {selectedFile?.lastModified ? new Date(selectedFile.lastModified).toLocaleDateString() : ''}</p>
+          </div>
+        ) : (
+          <p>Select a file to show details</p>
+        )}
+        {isFilePicked && (
+          <div>
+            <button onClick={handleSubmission}>Sign Document</button>
+            {numPages && <PageNumbers setPageNumber={setPageNumber} numPages={numPages} pageNumber={pageNumber} />}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
