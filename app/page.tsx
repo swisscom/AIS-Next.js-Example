@@ -1,194 +1,137 @@
-"use client"
-import { useState } from "react";
-import { Document, Page, } from "react-pdf";
+"use client";
 
-interface PageNumbersProps {
-  pageNumber: number;
-  setPageNumber: React.Dispatch<React.SetStateAction<number>>;
-  numPages: number;
-}
+import React, { useState } from "react";
+import { Document, Page, pdfjs } from "react-pdf";
+import "react-pdf/dist/esm/Page/AnnotationLayer.css";
+import "react-pdf/dist/esm/Page/TextLayer.css";
 
-const PageNumbers: React.FC<PageNumbersProps> = ({ pageNumber, setPageNumber, numPages }) => {
-  return (
-    <div style={{ marginTop: "16px" }}>
-      <div style={{ marginBottom: "16px" }}>
-        Page {pageNumber} of {numPages}
-      </div>
-      {pageNumber > 1 && <button onClick={() => setPageNumber((prevState) => prevState - 1)}>previous page</button>}
-      {pageNumber >= 1 && pageNumber < numPages && (
-        <button onClick={() => setPageNumber((prevState) => prevState + 1)}>next page</button>
-      )}
-    </div>
-  );
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
+
+const generateDigest = async (file: File): Promise<string> => {
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = new Uint8Array(arrayBuffer);
+  const hashBuffer = await crypto.subtle.digest("SHA-512", buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+  return btoa(String.fromCharCode(...hashArray));
 };
 
-
 export default function Home() {
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isFilePicked, setIsFilePicked] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [digest, setDigest] = useState<string | null>(null);
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
 
-  interface FileChangeEvent extends React.ChangeEvent<HTMLInputElement> {
-    target: HTMLInputElement & {
-      files: FileList;
-    };
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setSelectedFile(file);
+
+    try {
+      setStatus("loading");
+      const generatedDigest = await generateDigest(file);
+      setDigest(generatedDigest);
+      setStatus("idle");
+    } catch (err) {
+      console.error("Digest generation failed", err);
+      setError("Failed to generate document digest.");
+      setStatus("error");
+    }
+  };
+
+  const handleSignDocument = async () => {
+    if (!digest || !selectedFile) {
+      setError("No file or digest available for signing.");
+      setStatus("error");
+      return;
+    }
+
+    try {
+      setStatus("loading");
+      setError(null);
+
+      const response = await fetch("https://ais.swisscom.com/AIS-Server/rs/v1.0/sign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          SignRequest: {
+            "@Profile": "http://ais.swisscom.ch/1.1",
+            OptionalInputs: {
+              SignatureType: "urn:ietf:rfc:3369",
+              ClaimedIdentity: { Name: "static-saphir4-ch" },
+              DocumentHash: {
+                "@Algorithm": "http://www.w3.org/2001/04/xmlenc#sha512",
+                DigestValue: digest,
+              },
+            },
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Sign API responded with status ${response.status}`);
+      }
+
+      const result = await response.json();
+      const signatureData = result?.SignResponse?.SignatureObject?.Base64Signature;
+
+      if (signatureData) {
+        setSignedUrl(`data:application/pkcs7-signature;base64,${signatureData}`);
+        setStatus("success");
+      } else {
+        throw new Error("No signature received in the response.");
+      }
+    } catch (err) {
+      console.error("Signing failed", err);
+      setError(err instanceof Error ? err.message : "Unknown error occurred.");
+      setStatus("error");
+    }
+  };
+
+  if (status === "loading") {
+    return <div>Processing...</div>;
   }
 
-  const changeHandler = (event: FileChangeEvent): void => {
-    setSelectedFile(event.target.files[0]);
-    setIsFilePicked(true);
-  };
-  const [numPages, setNumPages] = useState<number | null>(null);
-
-  const [pageNumber, setPageNumber] = useState(1);
-  const [loading, setLoading] = useState(false);
-
-  const [signedSuccessfully, setSignedSuccessfully] = useState(false);
-  const [errorExist, setErrorExist] = useState(false);
-
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
+  if (status === "error") {
+    return (
+      <div>
+        <p>Error: {error}</p>
+        <button onClick={() => setStatus("idle")}>Retry</button>
+      </div>
+    );
   }
 
-  const handleSubmission = () => {
-    if (!selectedFile) return;
-    
-    setLocalStorage();
-
-    const formData = new FormData();
-
-    formData.append("pdf-file", selectedFile);
-
-    fetch("http://localhost:8001/upload", {
-      method: "POST",
-      body: formData,
-    })
-      .then((response) => response.json())
-      .then((result) => {
-        console.log("Success:", result);
-
-        setLoading(true);
-        signPdf();
-      })
-      .catch((error) => {
-        console.error("Error:", error);
-      });
-  };
-
-  const setLocalStorage = () => {
-    const pdfTitle = selectedFile?.name.substring(0, selectedFile.name.length - 4);
-
-    localStorage.setItem("pdfTitle", JSON.stringify({ pdfTitle }));
-  };
-
-  const signPdf = () => {
-    const pdfTitle = localStorage.getItem("pdfTitle");
-
-    // temp sign
-    fetch("http://localhost:8001/signpdf", {
-      method: "POST",
-      body: pdfTitle,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-    })
-      .then((response) => response.json())
-      .then((result) => {
-        console.log("Success:", result);
-        setLoading(false);
-
-        if (result?.error) {
-          setErrorExist(result.error);
-        } else {
-          setSignedSuccessfully(true);
-        }
-      });
-  };
-
-  if (loading)
+  if (status === "success" && signedUrl) {
     return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexDirection: "column" }}>
-        <p style={{ color: "#fff", fontSize: 24 }}>Signing is pending</p>
-        <div>...</div>
+      <div>
+        <a href={signedUrl} download={`${selectedFile?.name}.p7s`}>
+          Download Signed Document
+        </a>
       </div>
     );
-
-  if (errorExist)
-    return (
-      <div className="interactionContainer">
-        <p>There was an error: {errorExist}</p>
-        <button
-          className="button"
-          onClick={() => {
-            setErrorExist(false);
-            localStorage.removeItem("pdfTitle");
-            setSelectedFile(null);
-            setIsFilePicked(false);
-          }}
-        >
-          Sign a new PDF
-        </button>
-      </div>
-    );
-
-  if (signedSuccessfully)
-    return (
-      <div className="interactionContainer">
-        <p>Signed successfully</p>
-        <button
-          className="button"
-          onClick={() => {
-            const pdfTitleObj = localStorage.getItem("pdfTitle");
-            if (!pdfTitleObj) return;
-            
-            const pdfTitle = JSON.parse(pdfTitleObj).pdfTitle;
-            const newWindow = window.open("http://localhost:8001/uploads/" + pdfTitle, "_blank");
-            newWindow?.focus();
-          }}
-        >
-          Download Signed PDF
-        </button>
-        <button
-          className="button"
-          onClick={() => {
-            setSignedSuccessfully(false);
-            localStorage.removeItem("pdfTitle");
-            setSelectedFile(null);
-            setIsFilePicked(false);
-          }}
-        >
-          Sign a new PDF
-        </button>
-      </div>
-    );
+  }
 
   return (
-    <div className="masthead">
-      {isFilePicked && (
-        <Document file={selectedFile} onLoadSuccess={onDocumentLoadSuccess}>
-          <Page pageNumber={pageNumber} height={800} />
-        </Document>
+    <div className="container mx-auto mt-8">
+      <input type="file" onChange={handleFileChange} />
+      {selectedFile && (
+        <div>
+          <Document file={selectedFile}>
+            <Page pageNumber={1} />
+          </Document>
+          <button onClick={handleSignDocument} disabled={!digest}>
+            Sign Document
+          </button>
+        </div>
       )}
-      <div className="interactionContainer">
-        <input type="file" name="file" onChange={changeHandler} />
-
-        {isFilePicked ? (
-          <div>
-            <p>Filename: {selectedFile?.name}</p>
-            <p>Filetype: {selectedFile?.type}</p>
-            <p>Size in bytes: {selectedFile?.size}</p>
-            <p>lastModifiedDate: {selectedFile?.lastModified ? new Date(selectedFile.lastModified).toLocaleDateString() : ''}</p>
-          </div>
-        ) : (
-          <p>Select a file to show details</p>
-        )}
-        {isFilePicked && (
-          <div>
-            <button onClick={handleSubmission}>Sign Document</button>
-            {numPages && <PageNumbers setPageNumber={setPageNumber} numPages={numPages} pageNumber={pageNumber} />}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
