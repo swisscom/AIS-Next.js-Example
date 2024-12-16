@@ -2,17 +2,12 @@ import axios from "axios";
 import { randomUUID } from "crypto";
 import fs from "fs";
 import https from "https";
-import { NextApiRequest, NextApiResponse } from "next";
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  const { digest } = req.body;
+export async function POST(request: Request) {
+  const { digest } = await request.json();
 
   if (!digest) {
-    return res.status(400).json({ error: "Digest is required." });
+    return new Response(JSON.stringify({ error: "Digest is required." }), { status: 400 });
   }
 
   try {
@@ -28,10 +23,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       {
         "SignRequest": {
           "@Profile": "http://ais.swisscom.ch/1.1",
-          "@RequestID": randomUUID,
+          "@RequestID": randomUUID(),
           "InputDocuments": {
             "DocumentHash": {
-              "@ID": randomUUID,
+              "@ID": randomUUID(),
               "dsig.DigestMethod": {
                 "@Algorithm": "http://www.w3.org/2001/04/xmlenc#sha512",
               },
@@ -65,16 +60,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     );
 
-    const result = response.data;
-    const signature = result?.SignResponse?.SignatureObject?.Base64Signature;
+
+    const signature = response.data?.SignResponse?.SignatureObject?.Other["sc.SignatureObjects"]["sc.ExtendedSignatureObject"].Base64Signature["$"];
 
     if (signature) {
-      res.status(200).json({ signature });
+      return new Response(JSON.stringify({ signature }), { status: 200 });
     } else {
       throw new Error("No signature received from AIS.");
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error("Signing error:", error);
-    res.status(500).json({ error: error.message || "Internal Server Error" });
+    const errorMessage = error instanceof Error ? error.message : "Internal Server Error";
+    return new Response(JSON.stringify({ error: errorMessage }), { status: 500 });
   }
 }
