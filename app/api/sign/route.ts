@@ -38,7 +38,6 @@ export async function POST(request: Request) {
               "@Type": "urn:ietf:rfc:3161"
             },
             "AdditionalProfile": [
-              "http://ais.swisscom.ch/1.0/profiles/batchprocessing",
               "urn:oasis:names:tc:dss:1.0:profiles:timestamping"
             ],
             "ClaimedIdentity": {
@@ -61,7 +60,7 @@ export async function POST(request: Request) {
     );
 
 
-    const signature = response.data?.SignResponse?.SignatureObject?.Other["sc.SignatureObjects"]["sc.ExtendedSignatureObject"].Base64Signature["$"];
+    const signature = response.data?.SignResponse?.SignatureObject?.Base64Signature["$"];
 
     if (signature) {
       return new Response(JSON.stringify({ signature }), { status: 200 });
