@@ -17,8 +17,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const agent = new https.Agent({
-      key: fs.readFileSync("/path/to/key.pem"),
-      cert: fs.readFileSync("/path/to/cert.pem"),
+      key: fs.readFileSync("/Users/taarujo6/Downloads/trade-signing-ssl/key.pem"),
+      cert: fs.readFileSync("/Users/taarujo6/Downloads/trade-signing-ssl/cert.pem"),
       rejectUnauthorized: false,
       keepAlive: true,
     });
