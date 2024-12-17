@@ -5,10 +5,11 @@ import https from "https";
 import { NextResponse } from "next/server";
 import path from "path";
 import {
+  addLtvToPdf,
   addSignaturePlaceholderToPdf,
   HashAlgorithms,
   pdfDigest,
-  signPdf,
+  signPdf
 } from "pdf-signatures";
 
 export async function POST(request: Request) {
@@ -102,11 +103,12 @@ export async function POST(request: Request) {
       signResponse.data?.SignResponse?.SignatureObject?.Base64Signature?.["$"];
     if (!signature) throw new Error("No signature received from AIS.");
 
-    const signedFileName = `signed-${originalFileName}`;
     const signedDir = path.join(process.cwd(), "public", "signed");
     if (!fs.existsSync(signedDir)) {
       fs.mkdirSync(signedDir, { recursive: true });
     }
+
+    const signedFileName = `signed-${originalFileName}`;
     const signedFilePath = path.join(signedDir, signedFileName);
 
     await signPdf({
@@ -115,12 +117,36 @@ export async function POST(request: Request) {
       signature,
     });
 
+    const revInfo =
+      signResponse.data?.SignResponse?.OptionalOutputs?.[
+        "sc.RevocationInformation"
+      ];
+    const crl = revInfo?.["sc.CRLs"]?.["sc.CRL"];
+    const ocsp = revInfo?.["sc.OCSPs"]?.["sc.OCSP"];
+
+    if (crl && ocsp) {
+      const ltvFileName = `signed-ltv-${originalFileName}`;
+      const ltvFilePath = path.join(signedDir, ltvFileName);
+
+      await addLtvToPdf({
+        file: signedFilePath,
+        out: ltvFilePath,
+        crl: [crl],
+        ocsp: [ocsp],
+      });
+
+      return NextResponse.json(
+        { url: `/signed/${ltvFileName}` },
+        { status: 200 },
+      );
+    }
+
     return NextResponse.json(
       { url: `/signed/${signedFileName}` },
       { status: 200 },
     );
   } catch (error) {
-    console.error("Signing error:", error);
+    console.error("Signing and LTV error:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Internal Server Error",
