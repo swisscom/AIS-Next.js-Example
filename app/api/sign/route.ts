@@ -6,7 +6,6 @@ import { NextResponse } from "next/server";
 import path from "path";
 import {
   addSignaturePlaceholderToPdf,
-  CertificationLevels,
   HashAlgorithms,
   pdfDigest,
   signPdf,
@@ -31,29 +30,19 @@ export async function POST(request: Request) {
       "/tmp",
       `placeholder_${originalFileName}`,
     );
-    const placeholderOptions = {
+
+    await addSignaturePlaceholderToPdf({
       file: tempPdfPath,
       out: pdfWithPlaceholder,
       estimatedsize: 30000,
-      certlevel: CertificationLevels.CertifiedNoChangesAllowed,
       reason: "Document approval",
       location: "Bern, Switzerland",
       contact: "contact@example.com",
       date: new Date().toISOString(),
-    };
-    await addSignaturePlaceholderToPdf(placeholderOptions);
-
-    // const hashBuffer = await crypto.subtle.digest(
-    //   "SHA-512",
-    //   fs.readFileSync(pdfWithPlaceholder),
-    // );
-    // const digest = Buffer.from(hashBuffer).toString("base64");
-
-    const tempFilePath = path.join("/tmp", originalFileName);
-    fs.writeFileSync(tempFilePath, fileBuffer);
+    });
 
     const digest = await pdfDigest({
-      file: tempFilePath,
+      file: pdfWithPlaceholder,
       algorithm: HashAlgorithms.Sha512,
     });
 
@@ -93,6 +82,7 @@ export async function POST(request: Request) {
               Name: "ais-90days-trial:static-saphir4-1-eu",
             },
             SignatureType: "urn:ietf:rfc:3369",
+            "sc.SignatureStandard": "PDF",
             "sc.AddRevocationInformation": {
               "@Type": "BOTH",
             },
@@ -119,12 +109,11 @@ export async function POST(request: Request) {
     }
     const signedFilePath = path.join(signedDir, signedFileName);
 
-    const signOptions = {
+    await signPdf({
       file: pdfWithPlaceholder,
       out: signedFilePath,
-      signature: signature,
-    };
-    await signPdf(signOptions);
+      signature,
+    });
 
     return NextResponse.json(
       { url: `/signed/${signedFileName}` },
