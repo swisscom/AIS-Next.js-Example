@@ -1,21 +1,21 @@
 import axios from "axios";
 import { randomUUID } from "crypto";
-import fs from "fs";
+import fs, { promises as fsPromises } from "fs";
 import https from "https";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import {
   addLtvToPdf,
   addSignaturePlaceholderToPdf,
   HashAlgorithms,
   pdfDigest,
-  signPdf
+  signPdf,
 } from "pdf-signatures";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
-    const file = formData.get("file") as File;
+    const file = formData.get("file") as File | null;
 
     if (!file) {
       return NextResponse.json({ error: "No file uploaded." }, { status: 400 });
@@ -24,11 +24,12 @@ export async function POST(request: Request) {
     const originalFileName = file.name;
     const fileBuffer = Buffer.from(await file.arrayBuffer());
 
-    const tempPdfPath = path.join("/tmp", originalFileName);
-    fs.writeFileSync(tempPdfPath, fileBuffer);
+    const tmpDir = "/tmp";
+    const tempPdfPath = path.join(tmpDir, originalFileName);
+    await fsPromises.writeFile(tempPdfPath, fileBuffer);
 
     const pdfWithPlaceholder = path.join(
-      "/tmp",
+      tmpDir,
       `placeholder_${originalFileName}`,
     );
 
@@ -47,49 +48,57 @@ export async function POST(request: Request) {
       algorithm: HashAlgorithms.Sha512,
     });
 
+    const keyPath = process.env.PRIVATE_KEY_PATH;
+    const certPath = process.env.CERT_PATH;
+
+    console.log("Key Path:", keyPath);
+    console.log("Cert Path:", certPath);
+
+    if (!keyPath || !certPath) {
+      throw new Error("Key or Cert path not configured properly.");
+    }
+
     const agent = new https.Agent({
-      key: fs.readFileSync(
-        "/Users/taarujo6/Downloads/trade-signing-ssl/key.pem",
-      ),
-      cert: fs.readFileSync(
-        "/Users/taarujo6/Downloads/trade-signing-ssl/cert.pem",
-      ),
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath),
       rejectUnauthorized: false,
     });
 
-    const signResponse = await axios.post(
-      "https://ais.swisscom.com/AIS-Server/rs/v1.0/sign",
-      {
-        SignRequest: {
-          "@Profile": "http://ais.swisscom.ch/1.1",
-          "@RequestID": randomUUID(),
-          InputDocuments: {
-            DocumentHash: {
-              "@ID": randomUUID(),
-              "dsig.DigestMethod": {
-                "@Algorithm": "http://www.w3.org/2001/04/xmlenc#sha512",
-              },
-              "dsig.DigestValue": digest,
+    const signRequestBody = {
+      SignRequest: {
+        "@Profile": "http://ais.swisscom.ch/1.1",
+        "@RequestID": randomUUID(),
+        InputDocuments: {
+          DocumentHash: {
+            "@ID": randomUUID(),
+            "dsig.DigestMethod": {
+              "@Algorithm": "http://www.w3.org/2001/04/xmlenc#sha512",
             },
+            "dsig.DigestValue": digest,
           },
-          OptionalInputs: {
-            AddTimestamp: {
-              "@Type": "urn:ietf:rfc:3161",
-            },
-            AdditionalProfile: [
-              "urn:oasis:names:tc:dss:1.0:profiles:timestamping",
-            ],
-            ClaimedIdentity: {
-              Name: "ais-90days-trial:static-saphir4-1-eu",
-            },
-            SignatureType: "urn:ietf:rfc:3369",
-            "sc.SignatureStandard": "PDF",
-            "sc.AddRevocationInformation": {
-              "@Type": "BOTH",
-            },
+        },
+        OptionalInputs: {
+          AddTimestamp: {
+            "@Type": "urn:ietf:rfc:3161",
+          },
+          AdditionalProfile: [
+            "urn:oasis:names:tc:dss:1.0:profiles:timestamping",
+          ],
+          ClaimedIdentity: {
+            Name: "ais-90days-trial:static-saphir4-1-eu",
+          },
+          SignatureType: "urn:ietf:rfc:3369",
+          "sc.SignatureStandard": "PDF",
+          "sc.AddRevocationInformation": {
+            "@Type": "BOTH",
           },
         },
       },
+    };
+
+    const signResponse = await axios.post(
+      "https://ais.swisscom.com/AIS-Server/rs/v1.0/sign",
+      signRequestBody,
       {
         httpsAgent: agent,
         headers: {
@@ -101,7 +110,9 @@ export async function POST(request: Request) {
 
     const signature =
       signResponse.data?.SignResponse?.SignatureObject?.Base64Signature?.["$"];
-    if (!signature) throw new Error("No signature received from AIS.");
+    if (!signature) {
+      throw new Error("No signature received from AIS.");
+    }
 
     const signedDir = path.join(process.cwd(), "public", "signed");
     if (!fs.existsSync(signedDir)) {
@@ -145,7 +156,7 @@ export async function POST(request: Request) {
       { url: `/signed/${signedFileName}` },
       { status: 200 },
     );
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Signing and LTV error:", error);
     return NextResponse.json(
       {
